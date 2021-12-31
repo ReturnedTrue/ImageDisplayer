@@ -1,8 +1,11 @@
 import { UserInputService, Workspace, RunService } from "@rbxts/services";
 import { remotes } from "shared/remotes";
 
+const RENDER_AT_EVERY_COLUMN = 100;
+
 task.wait(2);
-const image = remotes.Client.Get("GetImage").CallServer();
+const { name, data } = remotes.Client.Get("GetImage").CallServer();
+const [imageX, imageY] = data.dimensions;
 
 const part = new Instance("Part");
 part.CanCollide = false;
@@ -17,16 +20,16 @@ task.wait(5);
 UserInputService.MouseIconEnabled = false;
 
 const partsRendered = [];
-let amountRendered = 0;
-let columnCounter = 0;
 
-const start = os.clock();
+function partIsTheSame(part: BasePart, transparency: number, color: Color3) {
+	return part.Transparency === transparency && part.Color === color;
+}
 
-for (let x = 0; x < image.dimensions[0]; x++) {
+for (let x = 0; x < imageX; x++) {
 	partsRendered[x] = new Array<Part>();
 
-	for (let y = 0; y < image.dimensions[1]; y++) {
-		const pixel = image.pixels[x][y];
+	for (let y = 0; y < imageY; y++) {
+		const pixel = data.pixels[x][y];
 		const [r, g, b, a] = pixel;
 
 		if (a === 1) {
@@ -36,37 +39,45 @@ for (let x = 0; x < image.dimensions[0]; x++) {
 		const constructedColor = Color3.fromRGB(r, g, b);
 		const adjacentPart = x > 0 && partsRendered[x - 1][y];
 
-		if (adjacentPart) {
-			if (adjacentPart.Transparency === a && adjacentPart.Color === constructedColor) {
-				adjacentPart.Size = adjacentPart.Size.add(x_increase);
-				adjacentPart.Position = adjacentPart.Position.add(x_increase.div(2));
+		if (adjacentPart && partIsTheSame(adjacentPart, a, constructedColor)) {
+			adjacentPart.Size = adjacentPart.Size.add(x_increase);
+			adjacentPart.Position = adjacentPart.Position.add(x_increase.div(2));
 
-				partsRendered[x][y] = adjacentPart;
-				continue;
-			}
+			partsRendered[x][y] = adjacentPart;
+			continue;
 		}
 
 		const pixelPart = part.Clone();
 		pixelPart.Transparency = a;
 		pixelPart.Color = constructedColor;
-		pixelPart.Position = new Vector3(x, -y + image.dimensions[1], 0);
-		pixelPart.Parent = Workspace;
+		pixelPart.Position = new Vector3(x, -y + imageY, 0);
 
 		partsRendered[x][y] = pixelPart;
-		amountRendered += 1;
+	}
+}
+
+task.wait(1);
+
+let amountRendered = 0;
+
+for (let x = 0; x < imageX; x++) {
+	for (let y = 0; y < imageY; y++) {
+		const part = partsRendered[x][y];
+
+		if (!part.Parent) {
+			part.Parent = Workspace;
+			amountRendered += 1;
+		}
 	}
 
-	columnCounter += 1;
-
-	if (columnCounter > 9) {
-		columnCounter = 0;
+	if (x % RENDER_AT_EVERY_COLUMN === 0) {
 		RunService.Heartbeat.Wait();
 	}
 }
 
-const timeTaken = os.clock() - start;
+task.wait(1);
 
-print("Amount normally needed:", image.dimensions[0] * image.dimensions[1]);
+print("Successfully rendered image:", name);
+print("-".rep(20));
+print("Amount normally needed:", imageX * imageY);
 print("Amount rendered:", amountRendered);
-
-print("Time taken:", timeTaken);
