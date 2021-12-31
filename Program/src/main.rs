@@ -15,7 +15,8 @@ use std::time::SystemTime;
 type PixelVec = Vec<JSONImagePixel>;
 type PixelData = Vec<PixelVec>;
 
-type ImageThreadHandle = thread::JoinHandle<Vec<(u32, u32, JSONImagePixel)>>;
+type ImageThreadVec = Vec<(u32, u32, JSONImagePixel)>;
+type ImageThreadHandle = thread::JoinHandle<ImageThreadVec>;
 
 #[derive(Serialize, Debug)]
 struct JSONImagePixel(u8, u8, u8, f32);
@@ -61,6 +62,32 @@ fn to_roblox_transparency(alpha: u8) -> f32 {
 	return roblox_transparency;
 }
 
+fn render_image_factory(
+	thread_start: u32,
+	thread_end: u32,
+	img_y: u32,
+	img_arc: Arc<image::DynamicImage>,
+) -> Box<dyn Fn() -> ImageThreadVec + Send> {
+	let thread_vec_size = (thread_end - thread_start) * img_y;
+	
+	return Box::new(move || {
+		let mut thread_vec: ImageThreadVec = Vec::with_capacity(thread_vec_size as usize);
+
+		for x in thread_start..thread_end {
+			for y in 0..img_y {
+				let rgba = img_arc.get_pixel(x, y);
+				let roblox_transparency = to_roblox_transparency(rgba[3]);
+
+				let encoded_pixel = JSONImagePixel(rgba[0], rgba[1], rgba[2], roblox_transparency);
+
+				thread_vec.push((x, y, encoded_pixel));
+			}
+		}
+
+		return thread_vec;
+	});
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
 	let start = SystemTime::now();
 
@@ -74,36 +101,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 	let img_arc = Arc::new(img);
 	let amount_of_threads = 10;
 	let x_per_thread = img_x / 10;
-	let thread_vec_size = x_per_thread * img_y;
 
 	let mut handles: Vec<ImageThreadHandle> = Vec::with_capacity(amount_of_threads);
 
 	for thread_start in (0..img_x).step_by(x_per_thread as usize) {
 		let cloned_img_arc = Arc::clone(&img_arc);
+		let thread_end = cmp::min(thread_start + x_per_thread, img_x);
 
-		handles.push(thread::spawn(move || {
-			let thread_end = cmp::min(thread_start + x_per_thread, img_x);
+		let render_function = render_image_factory(thread_start, thread_end, img_y, cloned_img_arc);
 
-			let mut thread_vec = Vec::with_capacity(thread_vec_size as usize);
-
-			for x in thread_start..thread_end {
-				for y in 0..img_y {
-					let rgba = cloned_img_arc.get_pixel(x, y);
-					let roblox_transparency = to_roblox_transparency(rgba[3]);
-
-					let encoded_pixel = JSONImagePixel(
-						rgba[0], 
-						rgba[1], 
-						rgba[2], 
-						roblox_transparency
-					);
-
-					thread_vec.push((x, y, encoded_pixel));
-				}
-			}
-
-			return thread_vec;
-		}));
+		handles.push(thread::spawn(render_function));
 	}
 
 	for handle in handles {
